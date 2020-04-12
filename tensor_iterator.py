@@ -2,13 +2,27 @@ import functools
 
 from metalibm_core.core.ml_operations import (
     ML_Operation,
+    GeneralArithmeticOperation,
     Variable, Addition, Multiplication,
+    ControlFlowOperation,
+    Constant,
     TableStore, TableLoad,
     Loop, Statement,
     ReferenceAssign, ML_LeafNode,
 )
 
+from metalibm_core.core.ml_formats import (
+    ML_Binary32, ML_Int32, ML_Void,
+)
+from metalibm_core.core.ml_complex_formats import ML_Pointer_Format
+
 from metalibm_core.core.advanced_operations import PlaceHolder
+from metalibm_core.core.ml_function import ML_FunctionBasis
+
+from metalibm_core.code_generation.generic_processor import GenericProcessor
+
+from metalibm_core.utility.ml_template import (
+    DefaultArgTemplate, ML_NewArgTemplate)
 
 
 class Tensor:
@@ -39,13 +53,15 @@ class Accessor(ML_Operation):
         self.index_expr = index_expr
 
 class ReadAccessor(Accessor):
-    pass
+    def __init__(self, tensor, index_expr, value_format):
+        Accessor.__init__(self, tensor, index_expr)
+        self.value_format = value_format
 class WriteAccessor(Accessor):
     def __init__(self, tensor, index_expr, value_expr):
         Accessor.__init__(self, tensor, index_expr)
         self.value_expr = value_expr
 
-class Range:
+class Range(ML_Operation):
     def __init__(self, first_index, last_index, index_step=None):
         self.first_index = first_index
         self.last_index = last_index
@@ -56,10 +72,19 @@ class IterRange(Range):
         Range.__init__(self, first_index, last_index, index_step)
         self.var_index = var_index
 
-class Sum:
-    def __init__(self, elt_operation, index_iter_range):
-        self.elt_operation = elt_operation
-        self.index_iter_range = index_iter_range
+class Sum(GeneralArithmeticOperation):
+    arity = 2
+    def __init__(self, elt_operation, index_iter_range, **kw):
+        super().__init__(elt_operation, index_iter_range, **kw)
+        # self.elt_operation = elt_operation
+        # self.index_iter_range = index_iter_range
+
+    @property
+    def elt_operation(self):
+        return self.get_input(0)
+    @property
+    def index_iter_range(self):
+        return self.get_input(1)
 
 class NDRange:
     def __init__(self, var_range_list, kernel):
@@ -67,20 +92,20 @@ class NDRange:
         self.var_range_list = var_range_list
         self.kernel = kernel
 
-def expand_kernel_expr(kernel):
+def expand_kernel_expr(kernel, iterator_format=ML_Int32):
     """ Expand a kernel expression into the corresponding MDL graph """
     if isinstance(kernel, Sum):
         var_iter = kernel.index_iter_range.var_index
         # TODO/FIXME to be uniquified
-        acc = Variable("acc", var_type=Variable.Local)
+        acc = Variable("acc", var_type=Variable.Local, precision=kernel.precision)
         # TODO/FIXME implement proper acc init
         scheme = Loop(
             Statement(
                 ReferenceAssign(var_iter, kernel.index_iter_range.first_index),
-                ReferenceAssign(acc, 0)
+                ReferenceAssign(acc, Constant(0, precision=kernel.precision))
             ),
             var_iter <= kernel.index_iter_range.last_index,
-            expand_kernel_expr(kernel.elt_operation)
+            ReferenceAssign(acc, acc + expand_kernel_expr(kernel.elt_operation))
         )
         return PlaceHolder(acc, scheme)
     elif isinstance(kernel, (ReadAccessor, WriteAccessor)):
@@ -100,20 +125,75 @@ def expand_accessor(accessor):
         # check dimensionnality: the number of sub-indexes in ReadAccessor's
         # index_expr must match the dimensionnality of ReadAccessor's tensor
         # tensor_descriptor
-        return TableLoad(accessor.tensor.base_buffer, accessor.tensor.descriptor.generate_linearized_offset(accessor.index_expr))
+        return TableLoad(accessor.tensor.base_buffer, accessor.tensor.descriptor.generate_linearized_offset(accessor.index_expr), precision=accessor.value_format)
     elif isinstance(accessor, WriteAccessor):
         return TableStore(
+            expand_kernel_expr(accessor.value_expr),
             accessor.tensor.base_buffer,
             accessor.tensor.descriptor.generate_linearized_offset(accessor.index_expr),
-            expand_kernel_expr(accessor.value_expr))
+            precision=ML_Void,
+        )
     else:
         raise NotImplementedError
+
+def extract_placeholder(node, memoization_map=None):
+    """ assunming node is an operation expression (not a Statement)
+        containing placeholder, this function extract the placeholder, remove
+        them for the expression and return them in a list by order
+        of appearance
+        
+        :return: pair(node, statement_list)
+    """
+    if memoization_map is None:
+        memoization_map = {}
+
+    if node in memoization_map:
+        return memoization_map[node]
+    else:
+        result = None
+        if isinstance(node, PlaceHolder):
+            head = node.get_input(0)
+            statement_list = []
+            for op in node.inputs[1:]:
+                _, local_list = extract_placeholder(op, memoization_map)
+                statement_list = statement_list + local_list
+            # process head after internal PlaceHolder statement
+            head, head_list = extract_placeholder(head, memoization_map)
+            statement_list = statement_list + head_list
+            # returning head for node value (de-capsulating PlaceHolder)
+            result = head, statement_list
+        elif isinstance(node, (Statement, Loop, ControlFlowOperation)):
+            return None, [node]
+        elif isinstance(node, Statement):
+            statement_list = []
+            for op in node.inputs:
+                new_op, local_list = extract_placeholder(op, memoization_map)
+                if not new_op is None:
+                    statement_list = statement_list + [new_op]
+                statement_list = statement_list + local_list
+            result = None, statement_list
+        elif isinstance(node, ML_LeafNode):
+            result = node, []
+        else:
+            statement_list = []
+            for index, op in enumerate(node.inputs):
+                new_node, local_list = extract_placeholder(op, memoization_map)
+                statement_list = statement_list + local_list
+                node.set_input(index, new_node)
+            result = node, statement_list
+        # memoizing result
+        memoization_map[node] = result
+        return result
+        
+
 
 def expand_ndrange(ndrange):
     """ Expand an ndrange object into a MDL graph """
     def expand_sub_ndrange(var_range_list, kernel):
         if len(var_range_list) == 0:
-            return expand_kernel_expr(kernel)
+            pre_expanded_kernel = expand_kernel_expr(kernel)
+            expanded_kernel, statement_list = extract_placeholder(pre_expanded_kernel)
+            return Statement(*tuple(statement_list), expanded_kernel)
         else:
             var, var_range = var_range_list.pop(0)
             scheme = Loop(
@@ -128,8 +208,67 @@ def expand_ndrange(ndrange):
     return expand_sub_ndrange(ndrange.var_range_list, ndrange.kernel)
 
 
+class MatrixMultiplyKernel(ML_FunctionBasis):
+    function_name = "matrix_multiply_kernel"
+    arity = 6
 
-if __name__ == "__main__":
+    @staticmethod
+    def get_default_args(**kw):
+        """ Return a structure containing the arguments for ML_Exponential,
+            builtin from a default argument mapping overloaded with @p kw """
+        default_args_mmk = {
+            "output_file": "mm_kernel.c",
+            "function_name": "mm_kernel",
+            "precision": ML_Binary32,
+            "target": GenericProcessor.get_target_instance()
+        }
+        default_args_mmk.update(kw)
+        return DefaultArgTemplate(**default_args_mmk)
+
+
+    def generate_scheme(self):
+        size_format = ML_Int32
+
+        # Matrix sizes
+        n = self.implementation.add_input_variable("n", size_format)
+        m = self.implementation.add_input_variable("m", size_format)
+        p = self.implementation.add_input_variable("p", size_format)
+
+        # Matrix storage
+        A_storage = self.implementation.add_input_variable("buffer_a", ML_Pointer_Format(self.precision))
+        B_storage = self.implementation.add_input_variable("buffer_b", ML_Pointer_Format(self.precision))
+        C_storage = self.implementation.add_input_variable("buffer_c", ML_Pointer_Format(self.precision))
+
+        # A is a (n x p) matrix in row-major
+        tA = Tensor(A_storage, TensorDescriptor([p, n], [1, p]))
+        # B is a (p x m) matrix in row-major
+        tB = Tensor(B_storage, TensorDescriptor([m, p], [1, m]))
+        # C is a (n x m) matrix in row-major
+        tC = Tensor(C_storage, TensorDescriptor([m, n], [1, m]))
+
+        index_format = ML_Int32
+
+        #
+        i = Variable("i", precision=index_format)
+        j = Variable("j", precision=index_format)
+        k = Variable("k", precision=index_format)
+        result = NDRange(
+            [(i, Range(0, n -1)), [j, Range(0, m-1)]],
+            WriteAccessor(
+                tC, [i, j],
+                Sum(
+                    Multiplication(
+                        ReadAccessor(tA, [i, k], self.precision),
+                        ReadAccessor(tB, [k, j], self.precision)),
+                    IterRange(k, 0, p - 1),
+                    precision=self.precision)))
+
+        mdl_scheme = expand_ndrange(result)
+        print("mdl_scheme:\n{}".format(mdl_scheme.get_str(depth=None)))
+        return mdl_scheme
+
+
+def example():
     # matrix multiply
     n = Variable("n")
     m = Variable("m")
@@ -153,5 +292,15 @@ if __name__ == "__main__":
     mdl_scheme = expand_ndrange(result)
     print("mdl_scheme:\n{}".format(mdl_scheme.get_str(depth=None)))
 
-
     # Convolutions
+    # TODO
+
+
+if __name__ == "__main__":
+    arg_template = ML_NewArgTemplate(default_arg=MatrixMultiplyKernel.get_default_args())
+    # argument extraction
+    args = arg_template.arg_extraction()
+
+    matrix_multiply_kernel = MatrixMultiplyKernel(args)
+
+    matrix_multiply_kernel.gen_implementation()
