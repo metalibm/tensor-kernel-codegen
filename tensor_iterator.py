@@ -1,6 +1,8 @@
 import functools
 import operator
 
+from sollya import Interval
+
 from metalibm_core.core.ml_operations import (
     ML_Operation,
     GeneralArithmeticOperation,
@@ -46,11 +48,17 @@ class TensorDescriptor:
         self.strides = strides
         self.scalar_format = scalar_format
 
+    def __str__(self):
+        return "T({})[{}]".format(" x ".join("{}(s={})".format(dim, stride) for dim, stride in zip(self.sdim, self.strides)), str(self.scalar_format))
+
     def get_bounding_size(self):
         """ return the total number of element in the minimal linearized array 
             containing the tensor """
-        strided_dims = [dim*stride for dim, stride in zip(self.sdim, self.strides)]
-        return functools.reduce(operator.mul, strided_dims, 1)
+        bounding_size = self.get_linear_index_from_multi([dim - 1 for dim in self.sdim]) + 1
+        print("{}'s bounding size is {}".format(str(self),bounding_size))
+        return bounding_size
+        #strided_dims = [dim*stride for dim, stride in zip(self.sdim, self.strides)]
+        #return functools.reduce(operator.mul, strided_dims, 1)
 
     def get_multi_index_from_linear(self, linear_index):
         """ Transform a linear index into a multi-dimension index """
@@ -61,6 +69,7 @@ class TensorDescriptor:
                 sub_index = linear_index // stride
             else:
                 sub_index = (linear_index // stride) % stride_p1
+            assert sub_index < self.sdim[len(sub_index_list)]
             sub_index_list.append(sub_index)
         return sub_index_list
     def get_linear_index_from_multi(self, multi_index):
@@ -70,8 +79,8 @@ class TensorDescriptor:
     def generate_linearized_offset(self, sub_index_list):
         """ Generate the offset to access tensor element located
             at sub_index_list """
-        extended_index_list = [Multiplication(self.sdim[i], sub_index) for i, sub_index in enumerate(sub_index_list)] 
-        return functools.reduce(Addition, extended_index_list)
+        extended_index_list = [(self.strides[i] * sub_index) for i, sub_index in enumerate(sub_index_list)] 
+        return functools.reduce(operator.add, extended_index_list)
 
 class Accessor(ML_Operation):
     """ common accessor: Read/Write operation to a Tensor """
@@ -271,6 +280,7 @@ class MatrixMultiplyKernel(MetaTensorFunction):
             "output_file": "mm_kernel.c",
             "function_name": "mm_kernel",
             "test_index_range": [[16, 32], [16, 32], [16, 32]],
+            "auto_test_range": [Interval(-1, 1), Interval(-1, 1)],
             "precision": ML_Binary32,
             "target": GenericProcessor.get_target_instance()
         }
@@ -302,17 +312,17 @@ class MatrixMultiplyKernel(MetaTensorFunction):
         index_format = ML_Int32
 
         #
-        i = Variable("i", precision=index_format)
-        j = Variable("j", precision=index_format)
-        k = Variable("k", precision=index_format)
+        i = Variable("i", precision=index_format, var_type=Variable.Local)
+        j = Variable("j", precision=index_format, var_type=Variable.Local)
+        k = Variable("k", precision=index_format, var_type=Variable.Local)
         result = NDRange(
-            [(i, Range(0, n -1)), [j, Range(0, m-1)]],
+            [(j, Range(0, m-1)), (i, Range(0, n -1))],
             WriteAccessor(
-                tC, [i, j],
+                tC, [j, i],
                 Sum(
                     Multiplication(
-                        ReadAccessor(tA, [i, k], self.precision),
-                        ReadAccessor(tB, [k, j], self.precision)),
+                        ReadAccessor(tA, [k, i], self.precision),
+                        ReadAccessor(tB, [j, k], self.precision)),
                     IterRange(k, 0, p - 1),
                     precision=self.precision)))
 
@@ -323,9 +333,57 @@ class MatrixMultiplyKernel(MetaTensorFunction):
             Return()
         )
 
-    def tensor_element_emulate(self, linear_id, input_tables):
-        nd_index = self.output_tensor_descriptor_list[0].get_multi_index_from_linear(linear_id)
+    def get_ordered_arg_tuple(self, tensor_descriptors, input_tables, output_tables):
+        (input_tensor_descriptor_list, output_tensor_descriptor_list) = tensor_descriptors
 
+        tA_desc = input_tensor_descriptor_list[0]
+        tB_desc = input_tensor_descriptor_list[1]
+        p = tA_desc.sdim[0]
+        n = tA_desc.sdim[1]
+        m = tB_desc.sdim[0]
+
+        index_format = ML_Int32
+
+        return (
+            input_tables[0], input_tables[1],
+            output_tables[0], 
+            Constant(n, precision=index_format),
+            Constant(m, precision=index_format),
+            Constant(p, precision=index_format),
+        )
+
+    def tensor_element_emulate(self, tensor_descriptors, output_tensor_id, linear_id, input_tables):
+        # matrix kernel only expects a single output tensor
+        assert output_tensor_id == 0
+
+        (input_tensor_descriptor_list, output_tensor_descriptor_list) = tensor_descriptors
+        out_nd_index = output_tensor_descriptor_list[0].get_multi_index_from_linear(linear_id)
+
+        j, i = out_nd_index
+        acc = 0
+        tA_desc = input_tensor_descriptor_list[0]
+        tB_desc = input_tensor_descriptor_list[1]
+        p = tA_desc.sdim[0]
+        assert p == tB_desc.sdim[1]
+        for k in range(p):
+            index_A = tA_desc.get_linear_index_from_multi([k, i])
+            index_B = tB_desc.get_linear_index_from_multi([j, k])
+            acc += input_tables[0][index_A] * input_tables[1][index_B]
+        return acc
+
+    def generate_output_tensor_descriptors(self, random_sizes):
+        """ generate list of instance of output tensor descriptors for testing """
+        n, m, p = random_sizes
+        # C is a (n x m) matrix in row-major
+        tC_desc = TensorDescriptor([m, n], [1, m], self.precision)
+        return [tC_desc]
+    def generate_innput_tensor_descriptors(self, random_sizes):
+        """ generate list of instance of input tensor descriptors for testing """
+        n, m, p = random_sizes
+        tA_desc = TensorDescriptor([p, n], [1, p], self.precision)
+        # B is a (p x m) matrix in row-major
+        tB_desc = TensorDescriptor([m, p], [1, m], self.precision)
+        return [tA_desc, tB_desc]
 
 def example():
     # matrix multiply
@@ -360,6 +418,7 @@ if __name__ == "__main__":
     # extra arguments
     arg_template.get_parser().add_argument(
         "--test-index-range", dest="test_index_range", default=[[16, 32], [16, 32], [16, 32]],
+        type=eval,
         action="store", help="random range for matrix sizes")
     # argument extraction
     args = arg_template.arg_extraction()
