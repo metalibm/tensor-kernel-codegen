@@ -5,7 +5,7 @@ from metalibm_core.core.ml_operations import (
     GeneralArithmeticOperation,
     Variable, Addition, Multiplication,
     ControlFlowOperation,
-    Constant,
+    Constant, Return,
     TableStore, TableLoad,
     Loop, Statement,
     ReferenceAssign, ML_LeafNode,
@@ -26,11 +26,13 @@ from metalibm_core.utility.ml_template import (
 
 
 class Tensor:
+    """ Tensor object """
     def __init__(self, base_buffer, tensor_descriptor):
         self.base_buffer = base_buffer
         self.descriptor = tensor_descriptor
 
 class TensorDescriptor:
+    """ Tensor parameters descriptor """
     def __init__(self, sdim, strides):
         """
             :arg sdim: number of elements in each dimension
@@ -48,15 +50,18 @@ class TensorDescriptor:
         return functools.reduce(Addition, extended_index_list)
 
 class Accessor(ML_Operation):
+    """ common accessor: Read/Write operation to a Tensor """
     def __init__(self, tensor, index_expr):
         self.tensor = tensor
         self.index_expr = index_expr
 
 class ReadAccessor(Accessor):
+    """ Read operation from a Tensor """
     def __init__(self, tensor, index_expr, value_format):
         Accessor.__init__(self, tensor, index_expr)
         self.value_format = value_format
 class WriteAccessor(Accessor):
+    """ Write operation to a Tensor """
     def __init__(self, tensor, index_expr, value_expr):
         Accessor.__init__(self, tensor, index_expr)
         self.value_expr = value_expr
@@ -68,11 +73,13 @@ class Range(ML_Operation):
         self.index_step = index_step
 
 class IterRange(Range):
+    """ Iterator range with explicit iteration variable """
     def __init__(self, var_index, first_index, last_index, index_step=None):
         Range.__init__(self, first_index, last_index, index_step)
         self.var_index = var_index
 
 class Sum(GeneralArithmeticOperation):
+    """ Compound summation of arbitrary length """
     arity = 2
     def __init__(self, elt_operation, index_iter_range, **kw):
         super().__init__(elt_operation, index_iter_range, **kw)
@@ -87,6 +94,7 @@ class Sum(GeneralArithmeticOperation):
         return self.get_input(1)
 
 class NDRange:
+    """ high-level N-dimensionnal range kernel description """
     def __init__(self, var_range_list, kernel):
         # kernel is executed on var_range_list
         self.var_range_list = var_range_list
@@ -121,6 +129,7 @@ def expand_kernel_expr(kernel, iterator_format=ML_Int32):
         return kernel
 
 def expand_accessor(accessor):
+    """ Expand an accessor node into a valid MDL description """
     if isinstance(accessor, ReadAccessor):
         # check dimensionnality: the number of sub-indexes in ReadAccessor's
         # index_expr must match the dimensionnality of ReadAccessor's tensor
@@ -138,11 +147,14 @@ def expand_accessor(accessor):
 
 def extract_placeholder(node, memoization_map=None):
     """ assunming node is an operation expression (not a Statement)
-        containing placeholder, this function extract the placeholder, remove
-        them for the expression and return them in a list by order
-        of appearance
-        
-        :return: pair(node, statement_list)
+        containing PlaceHolder nodes, this function extract the PlaceHolder
+        nodes, remove them for the expression and return them in a list by order
+        of appearance, alongside the placeholder-free expression
+
+        :arg node: root of the operation graph to process
+        :type node: ML_Operation
+        :return: pair(node, statement_list), placeholder-free node and
+                 extracted statement
     """
     if memoization_map is None:
         memoization_map = {}
@@ -184,7 +196,6 @@ def extract_placeholder(node, memoization_map=None):
         # memoizing result
         memoization_map[node] = result
         return result
-        
 
 
 def expand_ndrange(ndrange):
@@ -209,6 +220,7 @@ def expand_ndrange(ndrange):
 
 
 class MatrixMultiplyKernel(ML_FunctionBasis):
+    """ Meta matrix multiply kernel """
     function_name = "matrix_multiply_kernel"
     arity = 6
 
@@ -265,7 +277,10 @@ class MatrixMultiplyKernel(ML_FunctionBasis):
 
         mdl_scheme = expand_ndrange(result)
         print("mdl_scheme:\n{}".format(mdl_scheme.get_str(depth=None)))
-        return mdl_scheme
+        return Statement(
+            mdl_scheme,
+            Return()
+        )
 
 
 def example():
