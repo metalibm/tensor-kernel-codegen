@@ -90,14 +90,14 @@ class WriteAccessor(Accessor):
         self.value_expr = value_expr
 
 class Range(ML_Operation):
-    def __init__(self, first_index, last_index, index_step=None):
+    def __init__(self, first_index, last_index, index_step=1):
         self.first_index = first_index
         self.last_index = last_index
         self.index_step = index_step
 
 class IterRange(Range):
     """ Iterator range with explicit iteration variable """
-    def __init__(self, var_index, first_index, last_index, index_step=None):
+    def __init__(self, var_index, first_index, last_index, index_step=1):
         Range.__init__(self, first_index, last_index, index_step)
         self.var_index = var_index
 
@@ -136,7 +136,11 @@ def expand_kernel_expr(kernel, iterator_format=ML_Int32):
                 ReferenceAssign(acc, Constant(0, precision=kernel.precision))
             ),
             var_iter <= kernel.index_iter_range.last_index,
-            ReferenceAssign(acc, acc + expand_kernel_expr(kernel.elt_operation))
+            Statement(
+                ReferenceAssign(acc, acc + expand_kernel_expr(kernel.elt_operation)),
+                # loop iterator increment
+                ReferenceAssign(var_iter, var_iter + kernel.index_iter_range.index_step)
+            )
         )
         return PlaceHolder(acc, scheme)
     elif isinstance(kernel, (ReadAccessor, WriteAccessor)):
@@ -236,7 +240,11 @@ def expand_ndrange(ndrange):
                 # exit condition
                 var <= var_range.last_index,
                 # loop body
-                expand_sub_ndrange(var_range_list, kernel)
+                Statement(
+                    expand_sub_ndrange(var_range_list, kernel),
+                    # loop iterator increment
+                    ReferenceAssign(var, var + var_range.index_step)
+                ),
             )
         return scheme
     return expand_sub_ndrange(ndrange.var_range_list, ndrange.kernel)
