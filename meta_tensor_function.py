@@ -1,8 +1,34 @@
-from sollya import Interval
+import random
 
-from metalibm_core.core.array_function import ML_ArrayFunction
+import sollya
+from sollya import Interval, inf, sup
+
+from metalibm_core.core.ml_formats import ML_Int32, ML_UInt32, ML_Void, ML_Int64
+from metalibm_core.core.array_function import (
+    ML_ArrayFunction,
+    generate_1d_table, generate_2d_table
+)
+from metalibm_core.core.random_gen import get_precision_rng
+from metalibm_core.core.special_values import FP_QNaN
+
 from metalibm_core.utility.ml_template import DefaultArgTemplate
+from metalibm_core.core.ml_table import ML_NewTable
 
+from metalibm_core.code_generation.code_function import (
+    CodeFunction, FunctionGroup
+)
+from metalibm_core.code_generation.generator_utility import (
+    FunctionOperator, TemplateOperatorFormat,
+    FO_Arg,
+)
+from metalibm_core.core.ml_operations import (
+    Variable, Constant,
+    Loop, ReferenceAssign, Statement,
+    TableLoad,
+    FunctionObject,
+    Return, ConditionBlock,
+    Addition,
+)
 
 class MetaTensorFunction(ML_ArrayFunction):
     def __init__(self,
@@ -13,18 +39,22 @@ class MetaTensorFunction(ML_ArrayFunction):
         self.output_tensor_args_indexes = output_tensor_args_indexes
         self.input_tensor_args_indexes = input_tensor_args_indexes
 
-    def generate_output_tensor_descriptors(self):
+    def generate_output_tensor_descriptors(self, random_sizes):
         """ generate list of instance of output tensor descriptors for testing """
         raise NotImplementedError
-    def generate_innput_tensor_descriptors(self):
+    def generate_innput_tensor_descriptors(self, random_sizes):
         """ generate list of instance of input tensor descriptors for testing """
         raise NotImplementedError
+
+    def generate_random_sizes(self):
+        return [random.randrange(lo, hi+1) for lo,hi in self.test_index_range]
 
     def generate_test_tables(self, test_num, test_ranges=[Interval(-1.0, 1.0)]):
         """ Generate inputs and output table to be shared between auto test
             and max_error tests """
-        output_tensor_descriptor_list = self.generate_output_tensor_descriptors()
-        input_tensor_descriptor_list = self.generate_innput_tensor_descriptors()
+        random_sizes = self.generate_random_sizes()
+        output_tensor_descriptor_list = self.generate_output_tensor_descriptors(random_sizes)
+        input_tensor_descriptor_list = self.generate_innput_tensor_descriptors(random_sizes)
 
         index_range = self.test_index_range
 
@@ -64,7 +94,8 @@ class MetaTensorFunction(ML_ArrayFunction):
             OUTPUT_PRECISION[table_id],
             self.uniquify_name("output_array_%d" % table_id),
             const=False,
-            value_gen=(lambda _: FP_QNaN(self.precision))
+            #value_gen=(lambda _: FP_QNaN(self.precision))
+            value_gen=(lambda _: 0)
         ) for table_id in range(NUM_OUTPUT_ARRAY)]
         tensor_descriptors = (input_tensor_descriptor_list, output_tensor_descriptor_list)
         return tensor_descriptors, input_tables, output_tables
@@ -102,6 +133,16 @@ class MetaTensorFunction(ML_ArrayFunction):
         return FunctionGroup([auto_test])
 
 
+    def get_ordered_arg_tuple(self, tensor_descriptors, input_tables, output_tables):
+        """ generate an ordered tuple of argument for the current function
+            assuming 
+            - tensor_descriptors is (input_tensor_descriptor_list, output_tensor_descriptor_list) 
+            - input tensors are listed in input_tables,
+            - output tensors are listed in output_tables
+        """
+        # must be overloaded by actual function
+        raise NotImplementedError
+
     def get_tensor_test_wrapper(
             self,
             tested_function,
@@ -124,21 +165,16 @@ class MetaTensorFunction(ML_ArrayFunction):
                      array_offset, array_len, test_id)
              @param printf_function FunctionObject to print error case
         """
-        test_id = Variable("test_id", precision = ML_Int32, var_type = Variable.Local)
-        test_num_cst = Constant(test_num, precision = ML_Int32, tag = "test_num")
-
         array_len = Variable("len", precision=ML_UInt32, var_type=Variable.Local)
 
-        array_offset = TableLoad(table_size_offset_array, test_id, 1)
 
         def pointer_add(table_addr, offset):
             pointer_format = table_addr.get_precision_as_pointer_format()
             return Addition(table_addr, offset, precision=pointer_format)
 
-        array_inputs    = tuple(pointer_add(input_tables[in_id], array_offset) for in_id in range(NUM_INPUT_ARRAY))
+        array_inputs    = tuple(input_tables[in_id] for in_id in range(NUM_INPUT_ARRAY))
         function_call = tested_function(
-            *((pointer_add(output_array, array_offset),) + array_inputs + (array_len,)))
-
+            *(self.get_ordered_arg_tuple(tensor_descriptors, input_tables, output_tables)))
 
         post_statement = post_statement_generator(
                             tensor_descriptors,
@@ -153,8 +189,6 @@ class MetaTensorFunction(ML_ArrayFunction):
 
 
     def get_printf_error_detail_fct(self, tensor_descriptor):
-        input_precisions = [self.get_input_precision(0).get_data_precision()]
-
         output_format = tensor_descriptor.scalar_format
         # result is the second argument of the function (after erroenous element index)
         result_arg_id = 1
@@ -181,7 +215,7 @@ class MetaTensorFunction(ML_ArrayFunction):
         # internal array iterator index
         vj = Variable("j", precision=ML_UInt32, var_type=Variable.Local)
 
-        printf_error_detail_function = self.get_printf_error_detail_fct()
+        printf_error_detail_function = self.get_printf_error_detail_fct(output_tensor_descriptor_list[0])
 
         NUM_INPUT_ARRAY = len(input_tables)
 
@@ -193,9 +227,9 @@ class MetaTensorFunction(ML_ArrayFunction):
 
         # implement check for each output tensor
         for out_id, out_td in enumerate(output_tensor_descriptor_list):
-            # expected values for the (vj)-th entry of the sub-arrat
-            expected_values = TableLoad(expected_tables[out_id], vj)
-            # local result for the (vj)-th entry of the sub-arrat
+            # expected values for the (vj)-th entry of the sub-array
+            expected_values = [TableLoad(expected_tables[out_id], vj, i) for i in range(self.accuracy.get_num_output_value())]
+            # local result for the (vj)-th entry of the sub-array
             local_result = TableLoad(output_tables[out_id], vj)
 
             array_len = out_td.get_bounding_size()
@@ -262,4 +296,5 @@ class MetaTensorFunction(ML_ArrayFunction):
                 "expected_table",
                 value_gen=expected_value_gen
             )
+            expected_tables.append(expected_table)
         return expected_tables
