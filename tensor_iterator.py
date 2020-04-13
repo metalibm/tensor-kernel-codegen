@@ -1,4 +1,5 @@
 import functools
+import operator
 
 from metalibm_core.core.ml_operations import (
     ML_Operation,
@@ -33,15 +34,37 @@ class Tensor:
 
 class TensorDescriptor:
     """ Tensor parameters descriptor """
-    def __init__(self, sdim, strides):
+    def __init__(self, sdim, strides, scalar_format):
         """
             :arg sdim: number of elements in each dimension
-            :arg strides: stride between 2 elements along one axis / dimension
+            :arg strides: stride between 2 elements along one axis / dimension (in # of elements)
 
             stride can either be a Constant or a Variable
         """
         self.sdim = sdim
         self.strides = strides
+        self.scalar_format = scalar_format
+
+    def get_bounding_size(self):
+        """ return the total number of element in the minimal linearized array 
+            containing the tensor """
+        strided_dims = [dim*stride for dim, stride in zip(self.sdim, self.strides)]
+        return functools.reduce(operator.mul, strided_dims, 1)
+
+    def get_multi_index_from_linear(self, linear_index):
+        """ Transform a linear index into a multi-dimension index """
+        sub_index_list = []
+        #for dim_size, stride in zip(self.sdim, self.strides):
+        for stride, stride_p1 in zip(self.strides, self.strides[1:] + [None]):
+            if stride_p1 is None:
+                sub_index = linear_index // stride
+            else:
+                sub_index = (linear_index // stride) % stride_p1
+            sub_index_list.append(sub_index)
+        return sub_index_list
+    def get_linear_index_from_multi(self, multi_index):
+        """ Transform a multi-dimension index in a linarized one """
+        return self.generate_linearized_offset(multi_index)
 
     def generate_linearized_offset(self, sub_index_list):
         """ Generate the offset to access tensor element located
@@ -252,11 +275,11 @@ class MatrixMultiplyKernel(ML_FunctionBasis):
         C_storage = self.implementation.add_input_variable("buffer_c", ML_Pointer_Format(self.precision))
 
         # A is a (n x p) matrix in row-major
-        tA = Tensor(A_storage, TensorDescriptor([p, n], [1, p]))
+        tA = Tensor(A_storage, TensorDescriptor([p, n], [1, p], self.precision))
         # B is a (p x m) matrix in row-major
-        tB = Tensor(B_storage, TensorDescriptor([m, p], [1, m]))
+        tB = Tensor(B_storage, TensorDescriptor([m, p], [1, m], self.precision))
         # C is a (n x m) matrix in row-major
-        tC = Tensor(C_storage, TensorDescriptor([m, n], [1, m]))
+        tC = Tensor(C_storage, TensorDescriptor([m, n], [1, m], self.precision))
 
         index_format = ML_Int32
 
