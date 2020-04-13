@@ -25,6 +25,7 @@ from metalibm_core.code_generation.generic_processor import GenericProcessor
 from metalibm_core.utility.ml_template import (
     DefaultArgTemplate, ML_NewArgTemplate)
 
+from meta_tensor_function import MetaTensorFunction
 
 class Tensor:
     """ Tensor object """
@@ -250,10 +251,17 @@ def expand_ndrange(ndrange):
     return expand_sub_ndrange(ndrange.var_range_list, ndrange.kernel)
 
 
-class MatrixMultiplyKernel(ML_FunctionBasis):
+class MatrixMultiplyKernel(MetaTensorFunction):
     """ Meta matrix multiply kernel """
     function_name = "matrix_multiply_kernel"
     arity = 6
+
+    def __init__(self, args=DefaultArgTemplate):
+        # list of argument indexes (in generated function argument list)
+        # corresponding to output (resp. input) tensors
+        output_tensor_indexes = [0]
+        input_tensor_indexes = [1, 2]
+        MetaTensorFunction.__init__(self, output_tensor_indexes, input_tensor_indexes, args)
 
     @staticmethod
     def get_default_args(**kw):
@@ -262,6 +270,7 @@ class MatrixMultiplyKernel(ML_FunctionBasis):
         default_args_mmk = {
             "output_file": "mm_kernel.c",
             "function_name": "mm_kernel",
+            "test_index_range": [[16, 32], [16, 32], [16, 32]],
             "precision": ML_Binary32,
             "target": GenericProcessor.get_target_instance()
         }
@@ -272,15 +281,16 @@ class MatrixMultiplyKernel(ML_FunctionBasis):
     def generate_scheme(self):
         size_format = ML_Int32
 
+        # Matrix storage
+        A_storage = self.implementation.add_input_variable("buffer_a", ML_Pointer_Format(self.precision))
+        B_storage = self.implementation.add_input_variable("buffer_b", ML_Pointer_Format(self.precision))
+        C_storage = self.implementation.add_input_variable("buffer_c", ML_Pointer_Format(self.precision))
+
         # Matrix sizes
         n = self.implementation.add_input_variable("n", size_format)
         m = self.implementation.add_input_variable("m", size_format)
         p = self.implementation.add_input_variable("p", size_format)
 
-        # Matrix storage
-        A_storage = self.implementation.add_input_variable("buffer_a", ML_Pointer_Format(self.precision))
-        B_storage = self.implementation.add_input_variable("buffer_b", ML_Pointer_Format(self.precision))
-        C_storage = self.implementation.add_input_variable("buffer_c", ML_Pointer_Format(self.precision))
 
         # A is a (n x p) matrix in row-major
         tA = Tensor(A_storage, TensorDescriptor([p, n], [1, p], self.precision))
@@ -313,6 +323,9 @@ class MatrixMultiplyKernel(ML_FunctionBasis):
             Return()
         )
 
+    def tensor_element_emulate(self, linear_id, input_tables):
+        nd_index = self.output_tensor_descriptor_list[0].get_multi_index_from_linear(linear_id)
+
 
 def example():
     # matrix multiply
@@ -344,6 +357,10 @@ def example():
 
 if __name__ == "__main__":
     arg_template = ML_NewArgTemplate(default_arg=MatrixMultiplyKernel.get_default_args())
+    # extra arguments
+    arg_template.get_parser().add_argument(
+        "--test-index-range", dest="test_index_range", default=[[16, 32], [16, 32], [16, 32]],
+        action="store", help="random range for matrix sizes")
     # argument extraction
     args = arg_template.arg_extraction()
 

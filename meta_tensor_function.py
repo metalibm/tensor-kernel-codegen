@@ -1,17 +1,17 @@
+from sollya import Interval
+
 from metalibm_core.core.array_function import ML_ArrayFunction
 from metalibm_core.utility.ml_template import DefaultArgTemplate
 
 
 class MetaTensorFunction(ML_ArrayFunction):
     def __init__(self,
-                 output_tensor_args_indexes;
+                 output_tensor_args_indexes,
                  input_tensor_args_indexes,
                  args=DefaultArgTemplate):
         ML_ArrayFunction.__init__(self, args)
         self.output_tensor_args_indexes = output_tensor_args_indexes
         self.input_tensor_args_indexes = input_tensor_args_indexes
-        #self.output_tensor_descriptor_list = output_tensor_descriptor_list
-        #self.input_tensor_descriptor_list = input_tensor_descriptor_list
 
     def generate_output_tensor_descriptors(self):
         """ generate list of instance of output tensor descriptors for testing """
@@ -48,7 +48,7 @@ class MetaTensorFunction(ML_ArrayFunction):
         input_tables = [
             generate_1d_table(
                 INPUT_ARRAY_SIZE[table_id],
-                input_precisions(table_id],
+                input_precisions[table_id],
                 self.uniquify_name("input_table_arg%d" % table_id),
                 value_gen=(lambda _: input_precisions[table_id].round_sollya_object(rng_map[table_id].get_new_value(), sollya.RN))
             ) for table_id in range(NUM_INPUT_ARRAY)
@@ -188,10 +188,11 @@ class MetaTensorFunction(ML_ArrayFunction):
         # generate the expected table for the whole multi-array
         expected_tables = self.generate_expected_table(tensor_descriptors, input_tables)
 
-        # loop implementation to check sub-array array_offset
-        # results validity
+        # global statement to list all checks
         check_statement = Statement()
-        for out_id, out_td in enumerate(output_tensor_descriptor_list)):
+
+        # implement check for each output tensor
+        for out_id, out_td in enumerate(output_tensor_descriptor_list):
             # expected values for the (vj)-th entry of the sub-arrat
             expected_values = TableLoad(expected_tables[out_id], vj)
             # local result for the (vj)-th entry of the sub-arrat
