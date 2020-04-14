@@ -234,17 +234,17 @@ def expand_ndrange(ndrange):
             expanded_kernel, statement_list = extract_placeholder(pre_expanded_kernel)
             return Statement(*tuple(statement_list), expanded_kernel)
         else:
-            var, var_range = var_range_list.pop(0)
+            var_range = var_range_list.pop(0)
             scheme = Loop(
                 # init statement
-                ReferenceAssign(var, var_range.first_index),
+                ReferenceAssign(var_range.var_index, var_range.first_index),
                 # exit condition
-                var <= var_range.last_index,
+                var_range.var_index <= var_range.last_index,
                 # loop body
                 Statement(
                     expand_sub_ndrange(var_range_list, kernel),
                     # loop iterator increment
-                    ReferenceAssign(var, var + var_range.index_step)
+                    ReferenceAssign(var_range.var_index, var_range.var_index + var_range.index_step)
                 ),
             )
         return scheme

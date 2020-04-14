@@ -18,7 +18,7 @@ from tensor_iterator import (
     Tensor,
     TensorDescriptor,
     NDRange, WriteAccessor, ReadAccessor,
-    IterRange, Range, Sum,
+    IterRange, Sum,
 
     expand_ndrange,
 )
@@ -79,7 +79,7 @@ class MatrixMultiplyKernel(MetaTensorFunction):
         j = Variable("j", precision=index_format, var_type=Variable.Local)
         k = Variable("k", precision=index_format, var_type=Variable.Local)
         result = NDRange(
-            [(j, Range(0, m-1)), (i, Range(0, n -1))],
+            [IterRange(j, 0, m-1), IterRange(i, 0, n -1)],
             WriteAccessor(
                 tC, [j, i],
                 Sum(
@@ -109,7 +109,7 @@ class MatrixMultiplyKernel(MetaTensorFunction):
 
         return (
             input_tables[0], input_tables[1],
-            output_tables[0], 
+            output_tables[0],
             Constant(n, precision=index_format),
             Constant(m, precision=index_format),
             Constant(p, precision=index_format),
@@ -147,33 +147,6 @@ class MatrixMultiplyKernel(MetaTensorFunction):
         # B is a (p x m) matrix in row-major
         tB_desc = TensorDescriptor([m, p], [1, m], self.precision)
         return [tA_desc, tB_desc]
-
-def example():
-    # matrix multiply
-    n = Variable("n")
-    m = Variable("m")
-    p = Variable("p")
-    A_storage = Variable("buffer_a")
-    B_storage = Variable("buffer_b")
-    C_storage = Variable("buffer_c")
-    # A is a (n x p) matrix in row-major
-    tA = Tensor(A_storage, TensorDescriptor([p, n], [1, p]))
-    # B is a (p x m) matrix in row-major
-    tB = Tensor(B_storage, TensorDescriptor([m, p], [1, m]))
-    # C is a (n x m) matrix in row-major
-    tC = Tensor(C_storage, TensorDescriptor([m, n], [1, m]))
-
-    #
-    i = Variable("i")
-    j = Variable("j")
-    k = Variable("k")
-    result = NDRange([(i, Range(0, n -1)), [j, Range(0, m-1)]], WriteAccessor(tC, [i, j], Sum(Multiplication(ReadAccessor(tA, [i, k]), ReadAccessor(tB, [k, j])), IterRange(k, 0, p - 1))))
-
-    mdl_scheme = expand_ndrange(result)
-    print("mdl_scheme:\n{}".format(mdl_scheme.get_str(depth=None)))
-
-    # Convolutions
-    # TODO
 
 
 if __name__ == "__main__":
