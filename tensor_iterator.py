@@ -10,7 +10,8 @@ from metalibm_core.core.ml_operations import (
     Constant,
     TableStore, TableLoad,
     Loop, Statement,
-    ReferenceAssign, ML_LeafNode,
+    ReferenceAssign,
+    is_leaf_node,
 )
 
 from metalibm_core.core.ml_formats import (
@@ -126,7 +127,9 @@ class NDRange:
 
 def expand_kernel_expr(kernel, iterator_format=ML_Int32):
     """ Expand a kernel expression into the corresponding MDL graph """
-    if isinstance(kernel, Sum):
+    if isinstance(kernel, NDRange):
+        return expand_ndrange(kernel)
+    elif isinstance(kernel, Sum):
         var_iter = kernel.index_iter_range.var_index
         # TODO/FIXME to be uniquified
         acc = Variable("acc", var_type=Variable.Local, precision=kernel.precision)
@@ -146,7 +149,7 @@ def expand_kernel_expr(kernel, iterator_format=ML_Int32):
         return PlaceHolder(acc, scheme)
     elif isinstance(kernel, (ReadAccessor, WriteAccessor)):
         return expand_accessor(kernel)
-    elif isinstance(kernel, ML_LeafNode):
+    elif is_leaf_node(kernel):
         return kernel
     else:
         # vanilla metalibm ops are left unmodified (except
@@ -212,7 +215,7 @@ def extract_placeholder(node, memoization_map=None):
                     statement_list = statement_list + [new_op]
                 statement_list = statement_list + local_list
             result = None, statement_list
-        elif isinstance(node, ML_LeafNode):
+        elif is_leaf_node(node):
             result = node, []
         else:
             statement_list = []
@@ -225,6 +228,70 @@ def extract_placeholder(node, memoization_map=None):
         memoization_map[node] = result
         return result
 
+def substitute_var(node, var_map, memoization_map=None):
+    """ process operation graph starting from node, 
+        and change any node in var_map by var_map[node].var_index """
+    if memoization_map is None:
+        memoization_map = {}
+    if node in memoization_map:
+        return memoization_map[node]
+    elif node in var_map:
+        result = var_map[node].var_index
+    elif isinstance(node, ReadAccessor):
+        node.index_expr = [substitute_var(sub_index, var_map, memoization_map) for sub_index in node.index_expr]
+        result = node
+    elif isinstance(node, WriteAccessor):
+        node.index_expr = [substitute_var(sub_index, var_map, memoization_map) for sub_index in node.index_expr]
+        node.value_expr = substitute_var(node.value_expr, var_map, memoization_map)
+        result = node
+    elif isinstance(node, IterRange): 
+        node.var_index = substitute_var(node.var_index, var_map, memoization_map)
+        node.first_index = substitute_var(node.first_index, var_map, memoization_map)
+        node.last_index = substitute_var(node.last_index, var_map, memoization_map)
+        node.index_step = substitute_var(node.index_step, var_map, memoization_map)
+
+        result = node
+    elif isinstance(node, int):
+        # FIXME: maybe int index should be wrapper as Constant
+        return node
+    elif is_leaf_node(node):
+        result = node
+    else:
+        for index, op in enumerate(node.inputs):
+            new_op = substitute_var(op, var_map, memoization_map)
+            node.set_input(index, new_op)
+        result = node
+    memoization_map[node] = result
+    return result
+    
+
+def tile_ndrange(ndrange, tile, index_format=ML_Int32):
+    """ transform ndrange such that it iterate over a sub-tile of
+        size tile rather than a single element
+        tile is a dict(var_index -> tile_dim) """
+    new_var_range_list = []
+    var_transform_map = {}
+    kernel_var_range_list = []
+    # transform var_range_list
+    for iter_range in ndrange.var_range_list:
+        var_index = iter_range.var_index
+        if var_index in tile:
+            tile_dim = tile[var_index]
+            new_iter_range = IterRange(var_index, iter_range.first_index, iter_range.last_index, index_step=tile_dim)
+            new_var_range_list.append(new_iter_range)
+            sub_var = Variable("sub_%s" % var_index.get_tag(), precision=index_format, var_type=Variable.Local)
+            sub_var_range = IterRange(sub_var, var_index, var_index + tile_dim-1)
+            kernel_var_range_list.append(sub_var_range)
+            var_transform_map[iter_range.var_index] = sub_var_range
+        else:
+            new_var_range_list.append(iter_range)
+    # tile kernel
+    new_kernel = substitute_var(ndrange.kernel, var_transform_map)
+    sub_ndrange = NDRange(kernel_var_range_list, new_kernel)
+    return NDRange(new_var_range_list, sub_ndrange)
+
+        
+
 
 def expand_ndrange(ndrange):
     """ Expand an ndrange object into a MDL graph """
@@ -232,7 +299,11 @@ def expand_ndrange(ndrange):
         if len(var_range_list) == 0:
             pre_expanded_kernel = expand_kernel_expr(kernel)
             expanded_kernel, statement_list = extract_placeholder(pre_expanded_kernel)
-            return Statement(*tuple(statement_list), expanded_kernel)
+            expanded_statement = Statement(*tuple(statement_list))
+            print("expand_ndrange: ", expanded_kernel, statement_list)
+            if not expanded_kernel is None:
+                expanded_statement.push(expanded_kernel)
+            return expanded_statement
         else:
             var_range = var_range_list.pop(0)
             scheme = Loop(
