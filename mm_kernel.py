@@ -2,7 +2,7 @@ from sollya import Interval
 
 
 from metalibm_core.core.ml_complex_formats import ML_Pointer_Format
-from metalibm_core.core.ml_formats import (ML_Binary32, ML_Int32)
+from metalibm_core.core.ml_formats import (ML_Binary32, ML_Int32, ML_Void)
 from metalibm_core.core.ml_operations import (
     Variable, Multiplication, Statement, Return, Constant)
 
@@ -34,6 +34,8 @@ class MatrixMultiplyKernel(MetaTensorFunction):
         output_tensor_indexes = [0]
         input_tensor_indexes = [1, 2]
         MetaTensorFunction.__init__(self, output_tensor_indexes, input_tensor_indexes, args)
+        # patch output format
+        self.implementation.set_output_format(ML_Void)
 
     @staticmethod
     def get_default_args(**kw):
