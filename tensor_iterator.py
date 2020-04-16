@@ -309,7 +309,9 @@ def expand_ndrange(ndrange):
             expanded_statement = Statement(*tuple(statement_list))
             print("expand_ndrange: ", expanded_kernel, statement_list)
             if not expanded_kernel is None:
-                expanded_statement.push(expanded_kernel)
+                # append expanded_kernel at the Statement's end once
+                # every PlaceHolder's dependency has been resolved
+                expanded_statement.add(expanded_kernel)
             return expanded_statement
         else:
             var_range = var_range_list.pop(0)
