@@ -20,7 +20,7 @@ from tensor_iterator import (
     NDRange, WriteAccessor, ReadAccessor,
     IterRange, Sum,
 
-    expand_ndrange, tile_ndrange,
+    expand_ndrange, tile_ndrange, exchange_loop_order
 )
 
 class MatrixMultiplyKernel(MetaTensorFunction):
@@ -91,7 +91,8 @@ class MatrixMultiplyKernel(MetaTensorFunction):
                     IterRange(k, 0, p - 1),
                     precision=self.precision)))
 
-        mdl_scheme = expand_ndrange(tile_ndrange(result, {j: 2, i: 2}))
+        #mdl_scheme = expand_ndrange(exchange_loop_order(tile_ndrange(result, {j: 2, i: 2}), [1, 0]))
+        mdl_scheme = expand_ndrange(exchange_loop_order(tile_ndrange(result, {j: 2, i: 2}), [1, 0]))
         print("mdl_scheme:\n{}".format(mdl_scheme.get_str(depth=None)))
         return Statement(
             mdl_scheme,
