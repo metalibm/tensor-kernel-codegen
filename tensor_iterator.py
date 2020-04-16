@@ -263,10 +263,10 @@ def substitute_var(node, var_map, memoization_map=None):
         result = node
     memoization_map[node] = result
     return result
-    
+
 
 def tile_ndrange(ndrange, tile, index_format=ML_Int32):
-    """ transform ndrange such that it iterate over a sub-tile of
+    """ inplace transform ndrange such that it iterate over a sub-tile of
         size tile rather than a single element
         tile is a dict(var_index -> tile_dim) """
     new_var_range_list = []
@@ -290,7 +290,14 @@ def tile_ndrange(ndrange, tile, index_format=ML_Int32):
     sub_ndrange = NDRange(kernel_var_range_list, new_kernel)
     return NDRange(new_var_range_list, sub_ndrange)
 
-        
+
+def exchange_loop_order(ndrange, new_order):
+    """ inplace modification the iteration order in ndrange by re-ordering
+        iter_range index according to new_order (list of indexes) """
+    assert len(new_order) == len(ndrange.var_range_list)
+    new_var_range_list = [ndrange.var_range_list[index] for index in new_order]
+    ndrange.var_range_list = new_var_range_list
+    return ndrange
 
 
 def expand_ndrange(ndrange):
