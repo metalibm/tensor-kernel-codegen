@@ -1,0 +1,18 @@
+image: registry.gitlab.com/nibrunie/metalibm:metalibm_ci_ghdl
+
+before_script:
+  - pip3 install git+https://github.com/kalray/metalibm@setup_install
+
+tensor_non_regression:
+  script:
+    - export PATH=/app/local/bin:$PATH
+    - export LD_LIBRARY_PATH=/app/local/lib/
+    - export PYTHONPATH=/app/local/python3/
+    - PYTHONPATH=$PWD:$PYTHONPATH ML_SRC_DIR=$PWD python3 tensor_non_regression.py
+
+
+lint:
+    stage: test
+    allow_failure: true
+    script:
+        - pylint ./
