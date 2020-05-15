@@ -1,7 +1,7 @@
 image: registry.gitlab.com/nibrunie/metalibm:metalibm_ci_ghdl
 
 before_script:
-  - pip3 install git+https://github.com/kalray/metalibm@setup_install
+  - pip3 install git+https://github.com/kalray/metalibm@asm_backend
 
 tensor_non_regression:
   script:
