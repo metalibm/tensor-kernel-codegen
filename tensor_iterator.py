@@ -4,7 +4,7 @@ import operator
 
 from metalibm_core.core.ml_operations import (
     ML_Operation,
-    GeneralArithmeticOperation,
+    ML_ArithmeticOperation,
     Variable, Addition, Multiplication,
     ControlFlowOperation,
     Constant,
@@ -103,7 +103,7 @@ class IterRange(Range):
         Range.__init__(self, first_index, last_index, index_step)
         self.var_index = var_index
 
-class Sum(GeneralArithmeticOperation):
+class Sum(ML_ArithmeticOperation):
     """ Compound summation of arbitrary length """
     arity = 2
     def __init__(self, elt_operation, index_iter_range, **kw):
