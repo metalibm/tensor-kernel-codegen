@@ -94,10 +94,10 @@ class ShallowConvKernel(MetaTensorFunction):
                     Sum(Multiplication(
                         ReadAccessor(tIn, [i + k_w, j - k_h], self.precision),
                         ReadAccessor(tKernel, [k_w, k_h], self.precision)),
-                        IterRange(k_w, -self.kernel_size[0] // 2, self.kernel_size[0] // 2),
+                        IterRange(k_w, -(self.kernel_size[0]-1) // 2, (self.kernel_size[0]-1) // 2),
                         precision=self.precision
                     ),
-                    IterRange(k_h, -self.kernel_size[1] // 2, self.kernel_size[1] // 2),
+                    IterRange(k_h, -(self.kernel_size[1]-1) // 2, (self.kernel_size[1]-1) // 2),
                     precision=self.precision)))
 
         mdl_scheme = expand_ndrange(result)
