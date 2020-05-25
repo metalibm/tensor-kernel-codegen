@@ -481,3 +481,61 @@ def expand_ndrange(ndrange):
     return expand_sub_ndrange(ndrange.var_range_list, ndrange.kernel)
 
 
+if __name__ == "__main__":
+    size_format = ML_Int32
+
+    # Matrix sizes
+    n = Variable("n", precision=size_format)
+    m = Variable("m", precision=size_format)
+    p = Variable("p", precision=size_format)
+
+    from metalibm_core.core.ml_formats import ML_Binary32
+    precision = ML_Binary32
+
+    # A is a (n x p) matrix in row-major
+    tA = Tensor(None, TensorDescriptor([p, n], [1, p], precision))
+    # B is a (p x m) matrix in row-major
+    tB = Tensor(None, TensorDescriptor([m, p], [1, m], precision))
+    # C is a (n x m) matrix in row-major
+    tC = Tensor(None, TensorDescriptor([m, n], [1, m], precision))
+
+    index_format = ML_Int32
+
+    #
+    i = Variable("i", precision=index_format, var_type=Variable.Local)
+    j = Variable("j", precision=index_format, var_type=Variable.Local)
+    k = Variable("k", precision=index_format, var_type=Variable.Local)
+
+    ra_0 = ReadAccessor(tA, [k, i], precision)
+    ra_1 = ReadAccessor(tB, [j, k], precision)
+
+    # ra_0 is dependent from <i>, so vectorization should lead to a VectorLoad/Gather
+    vectorized_ra_0 = vectorize_read_accessor(ra_0, i, 4)
+    print("{} vectorized into {}".format(ra_0, vectorized_ra_0))
+    print("\n----\n")
+    # ra_1 is independent from <i>, so vectorization should lead to a broadcast
+    vectorized_ra_1 = vectorize_read_accessor(ra_1, i, 4)
+    print("{} vectorized into {}".format(ra_1, vectorized_ra_1))
+    print("\n----\n")
+    vectorized_ra_2 = vectorize_read_accessor(ra_0, k, 4)
+    print("{} vectorized into {}".format(ra_0, vectorized_ra_2))
+    print("\n----\n")
+
+    offseted_ra_0 = offset_read_accessor(ra_0, { k: 3, i: 7}) 
+    print("{} offset k->3 into {}".format(ra_0, offseted_ra_0))
+    print("\n----\n")
+
+    kernel = WriteAccessor(
+                tC, [j, i],
+                Sum(
+                    Multiplication(
+                        ReadAccessor(tA, [k, i], precision),
+                        ReadAccessor(tB, [j, k], precision),
+                        precision=precision),
+                    IterRange(k, 0, p - 1),
+                    precision=precision))
+
+    print("kernel is {}".format(kernel))
+    vectorized_kernel = vectorize_kernel_value(kernel, j, 4)
+    print("vectorized kernel is {}".format(vectorized_kernel))
+    print("vectorized kernel expr is {}".format(vectorized_kernel.value_expr))
