@@ -202,14 +202,19 @@ def expand_kernel_expr(kernel, iterator_format=ML_Int32):
         # TODO/FIXME to be uniquified
         acc = Variable("acc", var_type=Variable.Local, precision=kernel.precision)
         # TODO/FIXME implement proper acc init
+        if kernel.precision.is_vector_format():
+            C0 = Constant([0] * kernel.precision.get_vector_size(), precision=kernel.precision)
+        else:
+            C0 = Constant(0, precision=kernel.precision)
         scheme = Loop(
             Statement(
                 ReferenceAssign(var_iter, kernel.index_iter_range.first_index),
-                ReferenceAssign(acc, Constant(0, precision=kernel.precision))
+                ReferenceAssign(acc, C0)
             ),
             var_iter <= kernel.index_iter_range.last_index,
             Statement(
-                ReferenceAssign(acc, acc + expand_kernel_expr(kernel.elt_operation)),
+                ReferenceAssign(acc,
+                    Addition(acc, expand_kernel_expr(kernel.elt_operation), precision=kernel.precision)),
                 # loop iterator increment
                 ReferenceAssign(var_iter, var_iter + kernel.index_iter_range.index_step)
             )
@@ -433,6 +438,26 @@ def vectorize_kernel_value(kernel, vectorized_index, vector_size):
             print("unsupported kernel in vectorize_kernel_value: {}\n".format(kernel))
             raise NotImplementedError 
     return vectorized_kernel
+
+
+
+
+def vectorize_ndrange(ndrange, vectorized_index, vector_size):
+    assert isinstance(ndrange, NDRange)
+    nb_occurence_vectorized_index = len([vectorized_index for var_range in ndrange.var_range_list if var_range.var_index == vectorized_index]) 
+    print("nb_occurence_vectorized_index={}".format(nb_occurence_vectorized_index))
+    assert nb_occurence_vectorized_index 
+    # setting vectorized_index's step value to vector_size
+    # to account for kernel vector expansion
+    for var_range in ndrange.var_range_list:
+        if var_range.var_index is vectorized_index:
+            Log.report(Log.Warning, "vectorization only works if {}'s range size is a multiple of {} (not checked)", vectorized_index, vector_size)
+            assert var_range.index_step == 1
+            var_range.index_step = vector_size
+
+    vectorized_kernel = vectorize_kernel_value(ndrange.kernel, vectorized_index, vector_size)
+    ndrange.kernel = vectorized_kernel
+    return ndrange
 
 
 
