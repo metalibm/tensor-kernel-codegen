@@ -83,6 +83,20 @@ tensor_test_list = [
         },
      ]
   ),
+  NewSchemeTest(
+    "matrix multiply kernel with vectorization",
+    mm_kernel.MatrixMultiplyKernel,
+    [{
+        "precision": ML_Binary32, "auto_test": 128, "execute_trigger": True,
+        "test_index_range": [[16, 16], [16,16], [16, 16]],
+        "auto_test_range": [Interval(-10,10), Interval(-10,10)],
+        "output_file": "mm_kernel_vectorized.c",
+        "accuracy": ML_CorrectlyRounded,
+        "vectorize": True,
+        "target": target_instanciate("vector"),
+        },
+     ]
+  ),
 ]
 
 test_tag_map = {}

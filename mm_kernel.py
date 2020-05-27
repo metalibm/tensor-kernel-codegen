@@ -20,7 +20,8 @@ from tensor_iterator import (
     NDRange, WriteAccessor, ReadAccessor,
     IterRange, Sum,
 
-    expand_ndrange, tile_ndrange, exchange_loop_order
+    expand_ndrange, tile_ndrange, exchange_loop_order,
+    vectorize_ndrange,
 )
 
 class MatrixMultiplyKernel(MetaTensorFunction):
@@ -36,6 +37,7 @@ class MatrixMultiplyKernel(MetaTensorFunction):
         MetaTensorFunction.__init__(self, output_tensor_indexes, input_tensor_indexes, args)
         # patch output format
         self.implementation.set_output_format(ML_Void)
+        self.vectorize = args.vectorize
 
     @staticmethod
     def get_default_args(**kw):
@@ -46,6 +48,7 @@ class MatrixMultiplyKernel(MetaTensorFunction):
             "function_name": "mm_kernel",
             "test_index_range": [[16, 32], [16, 32], [16, 32]],
             "auto_test_range": [Interval(-1, 1), Interval(-1, 1)],
+            "vectorize": False,
             "precision": ML_Binary32,
             "target": GenericProcessor.get_target_instance()
         }
@@ -87,13 +90,17 @@ class MatrixMultiplyKernel(MetaTensorFunction):
                 Sum(
                     Multiplication(
                         ReadAccessor(tA, [k, i], self.precision),
-                        ReadAccessor(tB, [j, k], self.precision)),
+                        ReadAccessor(tB, [j, k], self.precision),
+                        precision=self.precision),
                     IterRange(k, 0, p - 1),
                     precision=self.precision)))
 
         #mdl_scheme = expand_ndrange(exchange_loop_order(tile_ndrange(result, {j: 2, i: 2}), [1, 0]))
-        mdl_scheme = expand_ndrange(exchange_loop_order(tile_ndrange(result, {j: 2, i: 2}), [1, 0]))
-        print("mdl_scheme:\n{}".format(mdl_scheme.get_str(depth=None)))
+        if self.vectorize:
+            mdl_scheme = expand_ndrange(vectorize_ndrange(result, j, 4))
+        else:
+            mdl_scheme = expand_ndrange(exchange_loop_order(tile_ndrange(result, {j: 2, i: 2}), [1, 0]))
+        print("mdl_scheme:\n{}".format(mdl_scheme.get_str(depth=None, display_precision=True)))
         return Statement(
             mdl_scheme,
             Return()
@@ -159,6 +166,9 @@ if __name__ == "__main__":
         "--test-index-range", dest="test_index_range", default=[[16, 32], [16, 32], [16, 32]],
         type=eval,
         action="store", help="random range for matrix sizes")
+    arg_template.get_parser().add_argument(
+        "--vectorize", const=True, default=False, action="store_const",
+        help="enable matrix-multiply vectorization")
     # argument extraction
     args = arg_template.arg_extraction()
 
