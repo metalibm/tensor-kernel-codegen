@@ -1,14 +1,21 @@
 image: registry.gitlab.com/nibrunie/metalibm:metalibm_ci_ghdl
 
 before_script:
-  - pip3 install git+https://github.com/kalray/metalibm@asm_backend
+  # installing ASM development environment (metalibm dependency)
+  - pip3 install git+https://github.com/nibrunie/asmde
+  # installing metalibm
+  - pip3 install --no-deps git+https://github.com/kalray/metalibm@vector_improvements
+  # "installing" metalibm support library
+  - mkdir -p /app/local/metalibm_lib/metalibm_core/
+  - wget https://gitlab.com/nibrunie/metalibm/uploads/2aeef1f46ed456f46e71fb622db2a8f6/metalibm.support_lib.tgz && tar -xzf metalibm.support_lib.tgz && mv support_lib /app/local/metalibm_lib/metalibm_core/
 
 tensor_non_regression:
   script:
     - export PATH=/app/local/bin:$PATH
     - export LD_LIBRARY_PATH=/app/local/lib/
     - export PYTHONPATH=/app/local/python3/
-    - PYTHONPATH=$PWD:$PYTHONPATH ML_SRC_DIR=$PWD python3 tensor_non_regression.py
+    - export ML_SRC_DIR=/app/local/metalibm_lib/
+    - PYTHONPATH=$PWD:$PYTHONPATH python3 tensor_non_regression.py --verbose Info 
 
 
 lint:
