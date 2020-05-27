@@ -13,6 +13,7 @@ from metalibm_core.core.ml_operations import (
     ReferenceAssign,
     is_leaf_node,
     VectorAssembling,
+    VectorBroadcast,
 )
 
 from metalibm_core.core.ml_formats import (
@@ -333,12 +334,6 @@ def offset_read_accessor(accessor, index_offset_map):
     offseted_index_expr = [substitude_in_expr(index_op, index_offset_map) for index_op in accessor.index_expr]
     new_accessor = ReadAccessor(accessor.tensor, offseted_index_expr, accessor.value_format)
     return new_accessor
-
-class VectorBroadcast(VectorAssembling):
-    """ Specialization of VectorAssembling operator which broadcast a single
-        element to all the vector lanes """
-    arity = 1
-    name = "VectorBroadcast"
 
 def vectorize_read_accessor(accessor, vectorized_index, vector_size):
     """ Vectorize an Accessor  by expanding it alongside <index_to_size>'s key Index
