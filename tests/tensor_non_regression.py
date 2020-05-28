@@ -32,7 +32,7 @@ from sollya import Interval, SollyaObject
 
 
 # import meta-tensor kernel scripts from current directory
-import mm_kernel
+import metakernels.mm_kernel as mm_kernel
 
 from metalibm_core.core.ml_formats import ML_Int32, ML_Binary32
 from metalibm_core.core.precisions import ML_CorrectlyRounded

@@ -12,9 +12,9 @@ from metalibm_core.code_generation.generic_processor import GenericProcessor
 from metalibm_core.utility.ml_template import (
     DefaultArgTemplate, ML_NewArgTemplate)
 
-from meta_tensor_function import MetaTensorFunction
+from tkg.meta_tensor_function import MetaTensorFunction
 
-from tensor_iterator import (
+from tkg.tensor_iterator import (
     Tensor,
     TensorDescriptor,
     NDRange, WriteAccessor, ReadAccessor,
