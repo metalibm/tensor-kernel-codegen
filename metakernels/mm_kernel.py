@@ -41,7 +41,7 @@ class MatrixMultiplyKernel(MetaTensorFunction):
 
     @staticmethod
     def get_default_args(**kw):
-        """ Return a structure containing the arguments for ML_Exponential,
+        """ Return a structure containing the arguments for MatrixMultiplyKernel
             builtin from a default argument mapping overloaded with @p kw """
         default_args_mmk = {
             "output_file": "mm_kernel.c",
@@ -57,7 +57,10 @@ class MatrixMultiplyKernel(MetaTensorFunction):
 
 
     def generate_scheme(self):
+        """ generate meta-scheme for Matrix-Multiply kernel """
+        # by default we rely on int32 to store size and indexes
         size_format = ML_Int32
+        index_format = ML_Int32
 
         # Matrix storage
         A_storage = self.implementation.add_input_variable("buffer_a", ML_Pointer_Format(self.precision))
@@ -69,7 +72,6 @@ class MatrixMultiplyKernel(MetaTensorFunction):
         m = self.implementation.add_input_variable("m", size_format)
         p = self.implementation.add_input_variable("p", size_format)
 
-
         # A is a (n x p) matrix in row-major
         tA = Tensor(A_storage, TensorDescriptor([p, n], [1, p], self.precision))
         # B is a (p x m) matrix in row-major
@@ -77,9 +79,6 @@ class MatrixMultiplyKernel(MetaTensorFunction):
         # C is a (n x m) matrix in row-major
         tC = Tensor(C_storage, TensorDescriptor([m, n], [1, m], self.precision))
 
-        index_format = ML_Int32
-
-        #
         i = Variable("i", precision=index_format, var_type=Variable.Local)
         j = Variable("j", precision=index_format, var_type=Variable.Local)
         k = Variable("k", precision=index_format, var_type=Variable.Local)
@@ -100,7 +99,6 @@ class MatrixMultiplyKernel(MetaTensorFunction):
             mdl_scheme = expand_ndrange(vectorize_ndrange(result, j, 4))
         else:
             mdl_scheme = expand_ndrange(exchange_loop_order(tile_ndrange(result, {j: 2, i: 2}), [1, 0]))
-        print("mdl_scheme:\n{}".format(mdl_scheme.get_str(depth=None, display_precision=True)))
         return Statement(
             mdl_scheme,
             Return()
@@ -126,6 +124,7 @@ class MatrixMultiplyKernel(MetaTensorFunction):
         )
 
     def tensor_element_emulate(self, tensor_descriptors, output_tensor_id, linear_id, input_tables):
+        """ emulate MatrixMultiplyKernel to generate auto-test expected """
         # matrix kernel only expects a single output tensor
         assert output_tensor_id == 0
 
